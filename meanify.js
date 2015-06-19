@@ -499,7 +499,7 @@ function Meanify(Model, options) {
 
 module.exports = function (options) {
 	
-	var express = require('express');
+	var express;
 	var restify;
 	var router;
 	var parser;
@@ -508,13 +508,13 @@ module.exports = function (options) {
 	
 	if (options.restifyServer) {
 		restify = require('restify');
-		router = options.restifyServer
+		router = options.restifyServer;
 		// Incoming request bodies are JSON parsed.
 		router.use(restify.bodyParser());
 	} else {
 		express = require('express');
 		parser = require('body-parser');
-		var router = express.Router({
+		router = express.Router({
 			caseSensitive: options.caseSensitive || true,
 			strict: options.strict || true
 		});
@@ -583,7 +583,7 @@ module.exports = function (options) {
 				router.post(path + '/' + method, meanify.update[method]);
 				debug('POST   ' + path + '/' + method);
 		}
-		router.delete(path, meanify.delete);
+		options.restifyServer ? router.del(path, meanify.delete) : router.delete(path, meanify.delete);
 		debug('DELETE ' + path);
 
 		// Sub-document route support.
