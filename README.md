@@ -100,7 +100,8 @@ var meanify = require('meanify')({
 	caseSensitive: false,
 	strict: false,
 	puts: true,
-	relate: true
+	relate: true,
+	restifyServer: serverObject
 });
 app.use(meanify());
 ```
@@ -127,6 +128,9 @@ By default, ngResource does not support PUT for updates without [making it more 
 
 ### relate
 Experimental feature that automatically populates references on create and removes them on delete. Default: `false`
+
+### restifyServer
+A reference ot the restify server object if restify is desired instead of express. Default: `undefined`
 
 ## Usage
 
