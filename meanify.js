@@ -12,10 +12,8 @@
 	TODO: https://github.com/mgonto/restangular
 */
 var debug = require('debug')('meanify');
-var express = require('express');
 var mongoose = require('mongoose');
 var pluralize = require('pluralize');
-var parser = require('body-parser');
 
 // mongoose.set('debug', true);
 
@@ -500,16 +498,29 @@ function Meanify(Model, options) {
 }
 
 module.exports = function (options) {
+	
+	var express = require('express');
+	var restify;
+	var router;
+	var parser;
 
 	options = options || {};
-
-	var router = express.Router({
-		caseSensitive: options.caseSensitive || true,
-		strict: options.strict || true
-	});
-
-	// Incoming request bodies are JSON parsed.
-	router.use(parser.json());
+	
+	if (options.restifyServer) {
+		restify = require('restify');
+		router = options.restifyServer
+		// Incoming request bodies are JSON parsed.
+		router.use(restify.bodyParser());
+	} else {
+		express = require('express');
+		parser = require('body-parser');
+		var router = express.Router({
+			caseSensitive: options.caseSensitive || true,
+			strict: options.strict || true
+		});
+		// Incoming request bodies are JSON parsed.
+		router.use(parser.json());
+	}
 
 	function api() {
 		return router;
