@@ -19,6 +19,8 @@ var pluralize = require('pluralize');
 
 function Meanify(Model, options) {
 
+	console.log('*********** INIT ************');
+
 	if (typeof Model === 'string') {
 		Model = mongoose.model(Model);
 	}
@@ -91,6 +93,7 @@ function Meanify(Model, options) {
 	}
 
 	meanify.search = function search(req, res, next) {
+		console.log('/****************** Got in search **************');
 		// TODO: Use Model.schema.paths to check/cast types.
 		var fields = req.query;
 		var params = {};
@@ -146,7 +149,11 @@ function Meanify(Model, options) {
 
 		var query = Model.find(fields);
 
+		console.log('********************* STARTED QUERY *******************');
+
 		if (params.count) {
+
+			console.log('********************* PARAMS COUNT *******************');
 			query.count(function (err, data) {
 				if (err) {
 					debug('Search middleware query.count error:', err);
@@ -167,12 +174,16 @@ function Meanify(Model, options) {
 			if (params.populate) {
 				query.populate(params.populate);
 			}
+
+			console.log('********************* BEFORE EXECUTE *******************');
 			query.exec(function (err, data) {
 				if (err) {
 					debug('Search middleware query error:', err);
 					return next(err);
 				}
-				return res.send(data);
+				console.log('********************** EXECUTED ******************');
+				return res.json(data);
+				next();
 			});
 		}
 	};
@@ -488,9 +499,136 @@ function Meanify(Model, options) {
 		};
 	}
 
+	function refDoc(field) {
+		var RefModel = mongoose.model(field);
+		field.toLowerCase();
+		if (options.pluralize) {
+			field = pluralize(field);
+		}
+
+		return {
+			search: function (req, res, next) {
+				var subId = req.params[field + 'Id'];
+				if (subId) {
+					RefModel.find({id: subId, modelName: req.params.id}, function (err, data) {
+						if (err) {
+							debug('Reference-document search middleware (' + field + ') Model.findById error:', err);
+							return next(err);
+						}
+						if (data) {
+							// TODO: Research available advanced query options.
+							return res.send(data);
+						} else {
+							return res.status(404).send();
+						}
+					});
+				} else {
+					return res.status(404).send();
+				}
+			},
+			create: function (req, res, next) {
+				if (req.body) {
+					req.body[modelName] = req.params.id;
+					RefModel.create(req.body, function (err, data) {
+						if (err) {
+							debug('Reference-document create middleware (' + field + ') Model.findById error:', err);
+							return res.status(400).send(err);
+						}
+						return res.status(201).send(data);
+					});
+				} else {
+					return res.status(404).send();
+				}
+			},
+			read: function (req, res, next) {
+				var subId = req.params[field + 'Id'];
+				if (subId) {
+					RefModel.findById(subId, function (err, data) {
+						if (err) {
+							debug('Reference-document read middleware (' + field + ') Model.findById error:', err);
+							return next(err);
+						}
+						if (data) {
+							return res.send(data);
+						} else {
+							return res.status(404).send();
+						}
+					});
+				} else {
+					return res.status(404).send();
+				}
+			},
+			update: function (req, res, next) {
+				var subId = req.params[field + 'Id'];
+				if (subId) {
+					RefModel.findById(subId, function (err, data) {
+						if (err) {
+							debug('Reference-document update middleware (' + field + ') Model.findById error:', err);
+							return next(err);
+						}
+						if (data) {
+							// Update using simple extend.
+							for (var property in req.body) {
+								data[property] = req.body[property];
+							}
+							data.save(function (err) {
+								if (err) {
+									return res.status(400).send(err);
+								}
+								return res.status(200).send(child);
+							});
+						} else {
+							return res.status(404).send();
+						}
+					});
+				} else {
+					return res.status(404).send();
+				}
+			},
+			delete: function (req, res, next) {
+				var id = req.params.id;
+				var subId = req.params[field + 'Id'];
+				if (subId) {
+					RefModel.findByIdAndRemove(id, function (err, data) {
+						if (err) {
+							debug('Reference-document delete middleware (' + field + ') Model.findById error:', err);
+							return next(err);
+						}
+
+						if (id) {
+							Model.findById(id, function (err, parent) {
+								if (err) {
+									debug('Reference-document delete middleware (' + field + ') Model.findById error:', err);
+									return next(err);
+								}
+								if (parent) {
+									parent[field].remove();
+									parent.save(function (err) {
+										if (err) {
+											return res.status(400).send(err);
+										}
+										return res.status(204).send();
+									});
+								} else {
+									return res.status(404).send();
+								}
+							});
+						}
+					});
+				} else {
+					return res.status(404).send();
+				}
+			}
+		};
+	}
+
 	var paths = Model.schema.paths;
 	for (var field in paths) {
 		var path = paths[field];
+		if (path.caster && path.caster.options && path.caster.options.ref) {
+			field = path.caster.options.ref;
+			meanify[field] = refDoc(field);
+		}
 		if (path.schema) {
 			meanify[field] = subdoc(field);
 		}
@@ -498,15 +636,21 @@ function Meanify(Model, options) {
 }
 
 module.exports = function (options) {
+
+	options = options || {};
+
+	console.log(options.middleware);
 	
 	var express;
 	var restify;
 	var router;
 	var parser;
+	var middleware = options.middleware || function(req, res, next) { next()};
+	var isRestify = (options.restifyServer);
 
-	options = options || {};
+	console.log('****************** SECOND middleware %j', middleware);
 	
-	if (options.restifyServer) {
+	if (isRestify) {
 		restify = require('restify');
 		router = options.restifyServer;
 		// Incoming request bodies are JSON parsed.
@@ -536,7 +680,10 @@ module.exports = function (options) {
 
 	for (var model in mongoose.models) {
 
-		var path = options.path;
+		var resource = {
+			path: options.path,
+			version: options.version
+		};
 
 		var route = model;
 		if (options.lowercase !== false) {
@@ -547,9 +694,11 @@ module.exports = function (options) {
 			route = pluralize(route);
 		}
 
-		path = path + route;
+		resource.path = options.path + route;
 		var Model = mongoose.model(model);
 		var meanify = new Meanify(Model, options);
+
+		console.log('********** AFTER INIT ******** %j', meanify);
 
 		// Save route for manual middleware use case.
 		api[route] = meanify;
@@ -559,61 +708,81 @@ module.exports = function (options) {
 			continue;
 		}
 
-		// Generate middleware routes.
-		router.get(path, meanify.search);
-		debug('GET    ' + path);
-		router.post(path, meanify.create);
-		debug('POST   ' + path);
+		// Generate middlware routes
+		console.log('meanify.search', meanify.search);
+		router.get(isRestify ? resource: resource.path, meanify.search);
+		console.log('%j', resource);
+		debug('GET    ' + resource.path);
+		router.post(isRestify ? resource: resource.path, middleware, meanify.create);
+		debug('POST   ' + resource.path);
 		if (options.puts) {
-			router.put(path, meanify.create);
-			debug('PUT    ' + path);
+			router.put(isRestify ? resource: resource.path, middleware, meanify.create);
+			debug('PUT    ' + resource.path);
 		}
-		path += '/:id';
-		router.get(path, meanify.read);
-		debug('GET    ' + path);
+		resource.path += '/:id';
+		router.get(isRestify ? resource: resource.path, middleware, meanify.read);
+		debug('GET    ' + resource.path);
 		if (options.puts) {
-			router.put(path, meanify.update);
-			debug('PUT    ' + path);
+			router.put(isRestify ? resource: resource.path, middleware, meanify.update);
+			debug('PUT    ' + resource.path);
 		}
-		router.post(path, meanify.update);
-		debug('POST   ' + path);
+		router.post(isRestify ? resource: resource.path, middleware, meanify.update);
+		debug('POST   ' + resource.path);
+		isRestify ? router.del(resource, middleware, meanify.delete) : router.delete(resource.path, middleware, meanify.delete);
+		debug('DELETE ' + resource.path);
 
+		// Get the root before appending methods to path
+		var root = resource.path;
+
+		/* GENERATE METHOD ROUTES */
 		var methods = Model.schema.methods;
 		for (var method in methods) {
-				router.post(path + '/' + method, meanify.update[method]);
-				debug('POST   ' + path + '/' + method);
+				resource.path += '/' + method;
+				router.post(isRestify ? resource: resource.path, meanify.update[method]);
+				debug('POST   ' + resource.path);
 		}
-		options.restifyServer ? router.del(path, meanify.delete) : router.delete(path, meanify.delete);
-		debug('DELETE ' + path);
 
-		// Sub-document route support.
-		var root = path;
+		/* SUB-DOCUMENT ROUTES */
+		// Re-assign path to root, removing methods
+		resource.path = root;
+
 		var paths = Model.schema.paths;
 		var subpath;
 		for (var field in paths) {
-			// TODO: Bad re-use of path.
-			path = paths[field];
+			var path = paths[field];
+
+			if (path.caster && path.caster.options && path.caster.options.ref) {
+				field = path.caster.options.ref;
+				path.schema = true;
+			}
+
+			var resourceField = field.toLowerCase();
+			if (options.pluralize) {
+				resourceField = pluralize(resourceField);
+			}
+
 			if (path.schema) {
-				subpath = root + '/' + field;
-				router.get(subpath, meanify[field].search);
-				debug('GET    ' + subpath);
-				router.post(subpath, meanify[field].create);
-				debug('POST   ' + subpath);
+				resource.path = root + '/' + resourceField;
+				console.log('meanify[field].search', meanify[field].search);
+				router.get(isRestify ? resource: resource.path, meanify[field].search);
+				debug('GET    ' + resource.path);
+				router.post(isRestify ? resource: resource.path, middleware, meanify[field].create);
+				debug('POST   ' + resource.path);
 				if (options.puts) {
-					router.put(subpath, meanify[field].create);
-					debug('PUT    ' + subpath);
+					router.put(isRestify ? resource: resource.path, middleware, meanify[field].create);
+					debug('PUT    ' + resource.path);
 				}
-				subpath += '/:' + field + 'Id';
-				router.get(subpath, meanify[field].read);
-				debug('GET    ' + subpath);
-				router.post(subpath, meanify[field].update);
-				debug('POST   ' + subpath);
+				resource.path += '/:' + resourceField + 'Id';
+				router.get(isRestify ? resource: resource.path, middleware, meanify[field].read);
+				debug('GET    ' + resource.path);
+				router.post(isRestify ? resource: resource.path, middleware, meanify[field].update);
+				debug('POST   ' + resource.path);
 				if (options.puts) {
-					router.put(subpath, meanify[field].update);
-					debug('PUT    ' + subpath);
+					router.put(isRestify ? resource: resource.path, middleware, meanify[field].update);
+					debug('PUT    ' + resource.path);
 				}
-				router.delete(subpath, meanify[field].delete);
-				debug('DELETE ' + subpath);
+				isRestify ? router.del(resource, middleware, meanify[field].delete) : router.delete(resource.path, middleware, meanify[field].delete);
+				debug('DELETE ' + resource.path);
 			}
 		}
 	}
